@@ -1,6 +1,9 @@
 import socket as sk
 import re
 
+from threading import Thread
+
+
 OK_MESSAGE = b"HTTP/1.1 200 OK\r\n\r\n"
 NOT_FOUND_MESSAGE = b"HTTP/1.1 404 Not Found\r\n\r\n"
 ECHO_MESSAGE = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}"
@@ -20,13 +23,8 @@ def run_http_server() -> None:
         client_socket, client_address = server_socket.accept()
 
         print("New connection with ", client_address)
-        handle_http_request(client_socket)
-
-
-def _build_echo_message(message: str) -> bytes:
-    body_size = str(len(message)).encode("utf-8")
-    encoded_body = message.encode("utf-8")
-    return b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + body_size + b"\r\n\r\n" + encoded_body
+        thread = Thread(target=handle_http_request, args=(client_socket, ))
+        thread.run()
 
 
 def handle_http_request(client_socket: sk.socket) -> None:
@@ -56,6 +54,12 @@ def handle_http_request(client_socket: sk.socket) -> None:
                     continue
 
             client_socket.send(NOT_FOUND_MESSAGE)
+
+
+def _build_echo_message(message: str) -> bytes:
+    body_size = str(len(message)).encode("utf-8")
+    encoded_body = message.encode("utf-8")
+    return b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + body_size + b"\r\n\r\n" + encoded_body
 
 
 def main():
