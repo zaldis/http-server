@@ -24,7 +24,7 @@ def run_http_server() -> None:
 
         print("New connection with ", client_address)
         thread = Thread(target=handle_http_request, args=(client_socket, ))
-        thread.run()
+        thread.start()
 
 
 def handle_http_request(client_socket: sk.socket) -> None:
