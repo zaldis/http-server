@@ -1,9 +1,14 @@
 import socket as sk
+import re
 
 OK_MESSAGE = b"HTTP/1.1 200 OK\r\n\r\n"
 NOT_FOUND_MESSAGE = b"HTTP/1.1 404 Not Found\r\n\r\n"
+ECHO_MESSAGE = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}"
 
 CLOSED_CONNECTION_MESSAGE = ""
+
+
+ECHO_ENDPOINT_PATTERN = re.compile(r"/echo/(.*)")
 
 
 def run_http_server() -> None:
@@ -17,6 +22,12 @@ def run_http_server() -> None:
         handle_http_request(client_socket)
 
 
+def _build_echo_message(message: str) -> bytes:
+    body_size = str(len(message)).encode("utf-8")
+    encoded_body = message.encode("utf-8")
+    return b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + body_size + b"\r\n\r\n" + encoded_body
+
+
 def handle_http_request(client_socket: sk.socket) -> None:
     with client_socket:
         while True:
@@ -24,10 +35,19 @@ def handle_http_request(client_socket: sk.socket) -> None:
             request_data = data.decode().split("\r\n")
             if request_data[0] == CLOSED_CONNECTION_MESSAGE:
                 break
+
             request_line = request_data[0]
             request_target = request_line.split(" ")[1]
-            message = OK_MESSAGE if request_target == '/' else NOT_FOUND_MESSAGE
-            client_socket.send(message)
+            if request_target == "/":
+                client_socket.send(OK_MESSAGE)
+                continue
+
+            echo_match = ECHO_ENDPOINT_PATTERN.match(request_target)
+            if message := echo_match.group(1):
+                client_socket.send(_build_echo_message(message))
+                continue
+
+            client_socket.send(NOT_FOUND_MESSAGE)
 
 
 def main():
