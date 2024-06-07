@@ -42,8 +42,8 @@ def handle_http_request(client_socket: sk.socket) -> None:
                 client_socket.send(OK_MESSAGE)
                 continue
 
-            echo_match = ECHO_ENDPOINT_PATTERN.match(request_target)
-            if message := echo_match.group(1):
+            if echo_match := ECHO_ENDPOINT_PATTERN.match(request_target):
+                message = echo_match.group(1)
                 client_socket.send(_build_echo_message(message))
                 continue
 
