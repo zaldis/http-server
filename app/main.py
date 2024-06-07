@@ -9,6 +9,7 @@ CLOSED_CONNECTION_MESSAGE = ""
 
 
 ECHO_ENDPOINT_PATTERN = re.compile(r"/echo/(.*)")
+USER_AGENT_PATTERN = re.compile(r"/user-agent")
 
 
 def run_http_server() -> None:
@@ -31,8 +32,8 @@ def _build_echo_message(message: str) -> bytes:
 def handle_http_request(client_socket: sk.socket) -> None:
     with client_socket:
         while True:
-            data = client_socket.recv(1024)
-            request_data = data.decode().split("\r\n")
+            data = client_socket.recv(1024).decode("utf-8")
+            request_data = data.split("\r\n")
             if request_data[0] == CLOSED_CONNECTION_MESSAGE:
                 break
 
@@ -46,6 +47,13 @@ def handle_http_request(client_socket: sk.socket) -> None:
                 message = echo_match.group(1)
                 client_socket.send(_build_echo_message(message))
                 continue
+
+            if USER_AGENT_PATTERN.match(request_target):
+                agent_items = [row for row in request_data if 'user-agent: ' in row.lower()]
+                if len(agent_items) == 1:
+                    message = agent_items[0][len('user-agent: ')-1:]
+                    client_socket.send(_build_echo_message(message))
+                    continue
 
             client_socket.send(NOT_FOUND_MESSAGE)
 
