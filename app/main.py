@@ -103,7 +103,7 @@ def main():
     args = parser.parse_args()
 
     global BASE_DIR
-    BASE_DIR = Path(args.directory)
+    BASE_DIR = args.directory and Path(args.directory)
 
     try:
         run_http_server()
