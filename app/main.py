@@ -8,6 +8,7 @@ from threading import Thread
 
 
 OK_MESSAGE = b"HTTP/1.1 200 OK\r\n\r\n"
+CREATED_MESSAGE = b"HTTP/1.1 201 Created\r\n\r\n"
 NOT_FOUND_MESSAGE = b"HTTP/1.1 404 Not Found\r\n\r\n"
 ECHO_MESSAGE = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}"
 
@@ -42,6 +43,7 @@ def handle_http_request(client_socket: sk.socket) -> None:
                 break
 
             request_line = request_data[0]
+            request_body = request_data[-1]
             request_target = request_line.split(" ")[1]
             if request_target == "/":
                 client_socket.send(OK_MESSAGE)
@@ -62,13 +64,18 @@ def handle_http_request(client_socket: sk.socket) -> None:
             if FILE_ENDPOINT_PATTERN.match(request_target):
                 if file_name_match := re.compile(r".*/files/(.*)").match(request_target):
                     file_name = file_name_match.group(1)
-                    try:
-                        with open(BASE_DIR / file_name, "rb") as file:
-                            data = file.read()
-                    except FileNotFoundError:
-                        client_socket.send(NOT_FOUND_MESSAGE)
+                    if request_body:
+                        with open(BASE_DIR / file_name, "wb") as file:
+                            file.write(request_body.encode())
+                        client_socket.send(CREATED_MESSAGE)
                     else:
-                        client_socket.send(_build_bytes_message(data))
+                        try:
+                            with open(BASE_DIR / file_name, "rb") as file:
+                                data = file.read()
+                        except FileNotFoundError:
+                            client_socket.send(NOT_FOUND_MESSAGE)
+                        else:
+                            client_socket.send(_build_bytes_message(data))
                     continue
 
             client_socket.send(NOT_FOUND_MESSAGE)
