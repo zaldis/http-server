@@ -50,8 +50,15 @@ def handle_http_request(client_socket: sk.socket) -> None:
                 continue
 
             if echo_match := ECHO_ENDPOINT_PATTERN.match(request_target):
+                encoding_items = [row for row in request_data if 'accept-encoding: ' in row.lower()]
+                headers = None
+                if len(encoding_items) == 1:
+                    encoding_name = encoding_items[0][len('accept-encoding: '):].strip()
+                    if encoding_name == "gzip":
+                        headers = [b"Content-Encoding: " + encoding_name.encode("utf-8")]
+
                 message = echo_match.group(1)
-                client_socket.send(_build_echo_message(message))
+                client_socket.send(_build_echo_message(message, headers=headers))
                 continue
 
             if USER_AGENT_ENDPOINT_PATTERN.match(request_target):
@@ -81,11 +88,17 @@ def handle_http_request(client_socket: sk.socket) -> None:
             client_socket.send(NOT_FOUND_MESSAGE)
 
 
-def _build_echo_message(message: str) -> bytes:
+def _build_echo_message(message: str, headers: Optional[list[bytes]] = None) -> bytes:
     message_size = str(len(message)).encode("utf-8")
     encoded_body = message.encode("utf-8")
+
+    encoded_headers = b"Content-Length: " + message_size
+    if headers is not None:
+        for header in headers:
+            encoded_headers = encoded_headers + b"\r\n" + header
+
     return (
-        b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + message_size + b"\r\n\r\n" + encoded_body
+        b"HTTP/1.1 200 OK\r\n" + encoded_headers + b"\r\n\r\n" + encoded_body
     )
 
 
