@@ -66,7 +66,7 @@ def handle_http_request(client_socket: sk.socket) -> None:
                 agent_items = [row for row in request_data if 'user-agent: ' in row.lower()]
                 if len(agent_items) == 1:
                     message = agent_items[0][len('user-agent: ')-1:].strip()
-                    client_socket.send(_build_echo_message(message))
+                    client_socket.send(_build_echo_message(message, headers=[b"Content-Type: text/plain"]))
                     continue
 
             if FILE_ENDPOINT_PATTERN.match(request_target):
