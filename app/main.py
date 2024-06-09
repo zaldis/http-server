@@ -53,9 +53,9 @@ def handle_http_request(client_socket: sk.socket) -> None:
                 encoding_items = [row for row in request_data if 'accept-encoding: ' in row.lower()]
                 headers = []
                 if len(encoding_items) == 1:
-                    encoding_name = encoding_items[0][len('accept-encoding: '):].strip()
-                    if encoding_name == "gzip":
-                        headers = [b"Content-Encoding: " + encoding_name.encode("utf-8")]
+                    encoding_names = encoding_items[0][len('accept-encoding: '):].strip().split(', ')
+                    if "gzip" in encoding_names:
+                        headers = [b"Content-Encoding: " + b"gzip"]
                 headers.append(b"Content-Type: text/plain")
 
                 message = echo_match.group(1)
