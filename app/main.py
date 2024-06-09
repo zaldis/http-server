@@ -1,4 +1,5 @@
 import argparse
+import gzip
 import socket as sk
 import re
 from pathlib import Path
@@ -50,15 +51,16 @@ def handle_http_request(client_socket: sk.socket) -> None:
                 continue
 
             if echo_match := ECHO_ENDPOINT_PATTERN.match(request_target):
+                message = echo_match.group(1).encode("utf-8")
                 encoding_items = [row for row in request_data if 'accept-encoding: ' in row.lower()]
                 headers = []
                 if len(encoding_items) == 1:
                     encoding_names = encoding_items[0][len('accept-encoding: '):].strip().split(', ')
                     if "gzip" in encoding_names:
                         headers = [b"Content-Encoding: " + b"gzip"]
+                        message = gzip.compress(message)
                 headers.append(b"Content-Type: text/plain")
 
-                message = echo_match.group(1)
                 client_socket.send(_build_echo_message(message, headers=headers))
                 continue
 
@@ -66,7 +68,7 @@ def handle_http_request(client_socket: sk.socket) -> None:
                 agent_items = [row for row in request_data if 'user-agent: ' in row.lower()]
                 if len(agent_items) == 1:
                     message = agent_items[0][len('user-agent: ')-1:].strip()
-                    client_socket.send(_build_echo_message(message, headers=[b"Content-Type: text/plain"]))
+                    client_socket.send(_build_echo_message(message.encode("utf-8"), headers=[b"Content-Type: text/plain"]))
                     continue
 
             if FILE_ENDPOINT_PATTERN.match(request_target):
@@ -89,9 +91,8 @@ def handle_http_request(client_socket: sk.socket) -> None:
             client_socket.send(NOT_FOUND_MESSAGE)
 
 
-def _build_echo_message(message: str, headers: Optional[list[bytes]] = None) -> bytes:
+def _build_echo_message(message: bytes, headers: Optional[list[bytes]] = None) -> bytes:
     message_size = str(len(message)).encode("utf-8")
-    encoded_body = message.encode("utf-8")
 
     encoded_headers = b"Content-Length: " + message_size
     if headers is not None:
@@ -99,7 +100,7 @@ def _build_echo_message(message: str, headers: Optional[list[bytes]] = None) -> 
             encoded_headers = encoded_headers + b"\r\n" + header
 
     return (
-        b"HTTP/1.1 200 OK\r\n" + encoded_headers + b"\r\n\r\n" + encoded_body
+        b"HTTP/1.1 200 OK\r\n" + encoded_headers + b"\r\n\r\n" + message
     )
 
 
