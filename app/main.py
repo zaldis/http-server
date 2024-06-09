@@ -51,11 +51,12 @@ def handle_http_request(client_socket: sk.socket) -> None:
 
             if echo_match := ECHO_ENDPOINT_PATTERN.match(request_target):
                 encoding_items = [row for row in request_data if 'accept-encoding: ' in row.lower()]
-                headers = None
+                headers = []
                 if len(encoding_items) == 1:
                     encoding_name = encoding_items[0][len('accept-encoding: '):].strip()
                     if encoding_name == "gzip":
                         headers = [b"Content-Encoding: " + encoding_name.encode("utf-8")]
+                headers.append(b"Content-Type: text/plain")
 
                 message = echo_match.group(1)
                 client_socket.send(_build_echo_message(message, headers=headers))
