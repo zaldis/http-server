@@ -3,7 +3,7 @@ import gzip
 import socket as sk
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TypedDict
 
 from threading import Thread
 
@@ -23,8 +23,16 @@ FILE_ENDPOINT_PATTERN = re.compile(r"/files")
 BASE_DIR: Optional[Path] = None
 
 
-def run_http_server() -> None:
-    server_socket = sk.create_server(("localhost", 4221), reuse_port=True)
+class Request(TypedDict):
+    method: str
+    url: str
+    version: str
+    headers: dict[str, list[str]]
+    body: bytes
+
+
+def run_http_server(port: int, base_directory: Path = Path('/tmp/')) -> None:
+    server_socket = sk.create_server(("localhost", port), reuse_port=True)
 
     while True:
         print("Waiting for connection...")
@@ -37,58 +45,73 @@ def run_http_server() -> None:
 
 def handle_http_request(client_socket: sk.socket) -> None:
     with client_socket:
-        while True:
-            data = client_socket.recv(1024).decode("utf-8")
-            request_data = data.split("\r\n")
-            if request_data[0] == CLOSED_CONNECTION_MESSAGE:
-                break
+        data = client_socket.recv(1024)
+        request = _parse_http_request(data)
 
-            request_line = request_data[0]
-            request_body = request_data[-1]
-            request_target = request_line.split(" ")[1]
-            if request_target == "/":
-                client_socket.send(OK_MESSAGE)
-                continue
+        if request["url"] == "/":
+            client_socket.send(OK_MESSAGE)
+            return
 
-            if echo_match := ECHO_ENDPOINT_PATTERN.match(request_target):
-                message = echo_match.group(1).encode("utf-8")
-                encoding_items = [row for row in request_data if 'accept-encoding: ' in row.lower()]
-                headers = []
-                if len(encoding_items) == 1:
-                    encoding_names = encoding_items[0][len('accept-encoding: '):].strip().split(', ')
-                    if "gzip" in encoding_names:
-                        headers = [b"Content-Encoding: " + b"gzip"]
-                        message = gzip.compress(message)
-                headers.append(b"Content-Type: text/plain")
+        if echo_match := ECHO_ENDPOINT_PATTERN.match(request["url"]):
+            message = echo_match.group(1).encode("utf-8")
+            encoding_names = request["headers"].get("accept-encoding")
+            headers = []
+            if encoding_names:
+                if "gzip" in encoding_names:
+                    headers = [b"Content-Encoding: " + b"gzip"]
+                    message = gzip.compress(message)
+            headers.append(b"Content-Type: text/plain")
 
-                client_socket.send(_build_echo_message(message, headers=headers))
-                continue
+            client_socket.send(_build_echo_message(message, headers=headers))
+            return
 
-            if USER_AGENT_ENDPOINT_PATTERN.match(request_target):
-                agent_items = [row for row in request_data if 'user-agent: ' in row.lower()]
-                if len(agent_items) == 1:
-                    message = agent_items[0][len('user-agent: ')-1:].strip()
-                    client_socket.send(_build_echo_message(message.encode("utf-8"), headers=[b"Content-Type: text/plain"]))
-                    continue
+        if USER_AGENT_ENDPOINT_PATTERN.match(request["url"]):
+            user_agent_values = request["headers"].get("user-agent")
+            if user_agent_values:
+                message = user_agent_values[0]
+                client_socket.send(_build_echo_message(message.encode("utf-8"), headers=[b"Content-Type: text/plain"]))
+                return
 
-            if FILE_ENDPOINT_PATTERN.match(request_target):
-                if file_name_match := re.compile(r".*/files/(.*)").match(request_target):
-                    file_name = file_name_match.group(1)
-                    if request_body:
-                        with open(BASE_DIR / file_name, "wb") as file:
-                            file.write(request_body.encode())
-                        client_socket.send(CREATED_MESSAGE)
+        if FILE_ENDPOINT_PATTERN.match(request["url"]):
+            if file_name_match := re.compile(r".*/files/(.*)").match(request["url"]):
+                file_name = file_name_match.group(1)
+                if body := request["body"]:
+                    with open(BASE_DIR / file_name, "wb") as file:
+                        file.write(body)
+                    client_socket.send(CREATED_MESSAGE)
+                else:
+                    try:
+                        with open(BASE_DIR / file_name, "rb") as file:
+                            data = file.read()
+                    except FileNotFoundError:
+                        client_socket.send(NOT_FOUND_MESSAGE)
                     else:
-                        try:
-                            with open(BASE_DIR / file_name, "rb") as file:
-                                data = file.read()
-                        except FileNotFoundError:
-                            client_socket.send(NOT_FOUND_MESSAGE)
-                        else:
-                            client_socket.send(_build_bytes_message(data))
-                    continue
+                        client_socket.send(_build_bytes_message(data))
+                return
 
-            client_socket.send(NOT_FOUND_MESSAGE)
+        client_socket.send(NOT_FOUND_MESSAGE)
+
+
+def _parse_http_request(request_data: bytes) -> Request:
+    request: Request = {
+        "method": "",
+        "url": "",
+        "version": "",
+        "headers": {},
+        "body": b"",
+    }
+    request_parts = request_data.split(b"\r\n")
+    (request["method"], request["url"], request["version"]) = request_parts[0].decode("utf-8").split()
+    request["body"] = request_parts[-1]
+
+    header_pattern = re.compile(r"(.*): (.*)")
+    for row_header in request_parts[1:-1]:
+        header_match = header_pattern.match(row_header.decode("utf-8"))
+        if header_match:
+            header_name, header_value = header_match.group(1), header_match.group(2)
+            request["headers"][header_name.lower()] = header_value.split(', ')
+
+    return request
 
 
 def _build_echo_message(message: bytes, headers: Optional[list[bytes]] = None) -> bytes:
@@ -128,7 +151,7 @@ def main():
     BASE_DIR = args.directory and Path(args.directory)
 
     try:
-        run_http_server()
+        run_http_server(port=4221)
     except KeyboardInterrupt:
         print("Server shutting down...")
 
