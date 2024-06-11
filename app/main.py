@@ -3,7 +3,7 @@ import gzip
 import socket as sk
 import re
 from pathlib import Path
-from typing import Optional, TypedDict
+from typing import Optional, TypedDict, Protocol
 
 from threading import Thread
 
@@ -31,6 +31,96 @@ class Request(TypedDict):
     body: bytes
 
 
+class BaseEndpoint(Protocol):
+    @staticmethod
+    def match_url(request: Request) -> bool:
+        raise NotImplementedError()
+
+    @staticmethod
+    def handle(request: Request) -> bytes:
+        raise NotImplementedError()
+
+
+class RootEndpoint:
+    @staticmethod
+    def match_url(request: Request) -> bool:
+        return request["url"] == "/"
+
+    @staticmethod
+    def handle(request: Request) -> bytes:
+        return OK_MESSAGE
+
+
+class EchoEndpoint(BaseEndpoint):
+    pattern = re.compile(r"/echo/(.*)")
+
+    @staticmethod
+    def match_url(request: Request) -> bool:
+        return bool(ECHO_ENDPOINT_PATTERN.match(request["url"]))
+
+    @staticmethod
+    def handle(request: Request) -> bytes:
+        echo_match = EchoEndpoint.pattern.match(request["url"])
+        message = echo_match.group(1).encode("utf-8")
+        encoding_names = request["headers"].get("accept-encoding")
+        headers = [b"Content-Type: text/plain"]
+        if encoding_names and "gzip" in encoding_names:
+            headers.append(b"Content-Encoding: " + b"gzip")
+            message = gzip.compress(message)
+
+        return _build_echo_message(message, headers=headers)
+
+
+class UserAgentEndpoint(BaseEndpoint):
+    pattern = re.compile(r"/user-agent")
+
+    @staticmethod
+    def match_url(request: Request) -> bool:
+        return bool(UserAgentEndpoint.pattern.match(request["url"]))
+
+    @staticmethod
+    def handle(request: Request) -> bytes:
+        user_agent_values = request["headers"].get("user-agent")
+        if user_agent_values:
+            message = user_agent_values[0]
+            return _build_echo_message(message.encode("utf-8"), headers=[b"Content-Type: text/plain"])
+        return b""
+
+
+class FileEndpoint(BaseEndpoint):
+    pattern = re.compile(r"/files")
+
+    @staticmethod
+    def match_url(request: Request) -> bool:
+        return bool(FileEndpoint.pattern.match(request["url"]))
+
+    @staticmethod
+    def handle(request: Request) -> bytes:
+        if file_name_match := re.compile(r".*/files/(.*)").match(request["url"]):
+            file_name = file_name_match.group(1)
+            if body := request["body"]:
+                with open(BASE_DIR / file_name, "wb") as file:
+                    file.write(body)
+                return CREATED_MESSAGE
+            else:
+                try:
+                    with open(BASE_DIR / file_name, "rb") as file:
+                        data = file.read()
+                except FileNotFoundError:
+                    return NOT_FOUND_MESSAGE
+                else:
+                    return _build_bytes_message(data)
+        return b""
+
+
+ENDPOINTS: list[BaseEndpoint] = [
+    RootEndpoint,
+    EchoEndpoint,
+    UserAgentEndpoint,
+    FileEndpoint,
+]
+
+
 def run_http_server(port: int, base_directory: Path = Path('/tmp/')) -> None:
     server_socket = sk.create_server(("localhost", port), reuse_port=True)
 
@@ -48,48 +138,55 @@ def handle_http_request(client_socket: sk.socket) -> None:
         data = client_socket.recv(1024)
         request = _parse_http_request(data)
 
-        if request["url"] == "/":
-            client_socket.send(OK_MESSAGE)
-            return
+        for endpoint in ENDPOINTS:
+            if endpoint.match_url(request):
+                client_socket.send(endpoint.handle(request))
+                break
+        else:
+            client_socket.send(NOT_FOUND_MESSAGE)
 
-        if echo_match := ECHO_ENDPOINT_PATTERN.match(request["url"]):
-            message = echo_match.group(1).encode("utf-8")
-            encoding_names = request["headers"].get("accept-encoding")
-            headers = []
-            if encoding_names:
-                if "gzip" in encoding_names:
-                    headers = [b"Content-Encoding: " + b"gzip"]
-                    message = gzip.compress(message)
-            headers.append(b"Content-Type: text/plain")
+        # if request["url"] == "/":
+        #     client_socket.send(OK_MESSAGE)
+        #     return
 
-            client_socket.send(_build_echo_message(message, headers=headers))
-            return
+        # if echo_match := ECHO_ENDPOINT_PATTERN.match(request["url"]):
+        #     message = echo_match.group(1).encode("utf-8")
+        #     encoding_names = request["headers"].get("accept-encoding")
+        #     headers = []
+        #     if encoding_names:
+        #         if "gzip" in encoding_names:
+        #             headers = [b"Content-Encoding: " + b"gzip"]
+        #             message = gzip.compress(message)
+        #     headers.append(b"Content-Type: text/plain")
+        #
+        #     client_socket.send(_build_echo_message(message, headers=headers))
+        #     return
 
-        if USER_AGENT_ENDPOINT_PATTERN.match(request["url"]):
-            user_agent_values = request["headers"].get("user-agent")
-            if user_agent_values:
-                message = user_agent_values[0]
-                client_socket.send(_build_echo_message(message.encode("utf-8"), headers=[b"Content-Type: text/plain"]))
-                return
+        # if USER_AGENT_ENDPOINT_PATTERN.match(request["url"]):
+        #     user_agent_values = request["headers"].get("user-agent")
+        #     if user_agent_values:
+        #         message = user_agent_values[0]
+        #         client_socket.send(_build_echo_message(message.encode("utf-8"), headers=[b"Content-Type: text/plain"]))
+        #         return
 
-        if FILE_ENDPOINT_PATTERN.match(request["url"]):
-            if file_name_match := re.compile(r".*/files/(.*)").match(request["url"]):
-                file_name = file_name_match.group(1)
-                if body := request["body"]:
-                    with open(BASE_DIR / file_name, "wb") as file:
-                        file.write(body)
-                    client_socket.send(CREATED_MESSAGE)
-                else:
-                    try:
-                        with open(BASE_DIR / file_name, "rb") as file:
-                            data = file.read()
-                    except FileNotFoundError:
-                        client_socket.send(NOT_FOUND_MESSAGE)
-                    else:
-                        client_socket.send(_build_bytes_message(data))
-                return
+        # if FILE_ENDPOINT_PATTERN.match(request["url"]):
+        #     if file_name_match := re.compile(r".*/files/(.*)").match(request["url"]):
+        #         file_name = file_name_match.group(1)
+        #         if body := request["body"]:
+        #             with open(BASE_DIR / file_name, "wb") as file:
+        #                 file.write(body)
+        #             client_socket.send(CREATED_MESSAGE)
+        #         else:
+        #             try:
+        #                 with open(BASE_DIR / file_name, "rb") as file:
+        #                     data = file.read()
+        #             except FileNotFoundError:
+        #                 client_socket.send(NOT_FOUND_MESSAGE)
+        #             else:
+        #                 client_socket.send(_build_bytes_message(data))
+        #         return
 
-        client_socket.send(NOT_FOUND_MESSAGE)
+        # client_socket.send(NOT_FOUND_MESSAGE)
 
 
 def _parse_http_request(request_data: bytes) -> Request:
