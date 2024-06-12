@@ -2,23 +2,20 @@ import argparse
 import gzip
 import socket as sk
 import re
+
 from pathlib import Path
 from typing import Optional, TypedDict, Protocol
-
 from threading import Thread
 
 
-OK_MESSAGE = b"HTTP/1.1 200 OK\r\n\r\n"
-CREATED_MESSAGE = b"HTTP/1.1 201 Created\r\n\r\n"
-NOT_FOUND_MESSAGE = b"HTTP/1.1 404 Not Found\r\n\r\n"
-ECHO_MESSAGE = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}"
+class StatusCode:
+    HTTP_200_OK = "200 OK"
+    HTTP_404_NOT_FOUND = "404 Not Found"
+    HTTP_201_CREATED = "201 Created"
+
 
 CLOSED_CONNECTION_MESSAGE = ""
 
-
-ECHO_ENDPOINT_PATTERN = re.compile(r"/echo/(.*)")
-USER_AGENT_ENDPOINT_PATTERN = re.compile(r"/user-agent")
-FILE_ENDPOINT_PATTERN = re.compile(r"/files")
 
 BASE_DIR: Optional[Path] = None
 
@@ -31,13 +28,19 @@ class Request(TypedDict):
     body: bytes
 
 
+class Response(TypedDict):
+    status: str
+    headers: dict[str, list[str]]
+    body: bytes
+
+
 class BaseEndpoint(Protocol):
     @staticmethod
     def match_url(request: Request) -> bool:
         raise NotImplementedError()
 
     @staticmethod
-    def handle(request: Request) -> bytes:
+    def build_response(request: Request) -> Response:
         raise NotImplementedError()
 
 
@@ -47,31 +50,38 @@ class RootEndpoint:
         return request["url"] == "/"
 
     @staticmethod
-    def handle(request: Request) -> bytes:
-        return OK_MESSAGE
+    def build_response(request: Request) -> Response:
+        return {
+            "status": StatusCode.HTTP_200_OK,
+            "headers": {},
+            "body": b"",
+        }
 
 
-class EchoEndpoint(BaseEndpoint):
+class EchoEndpoint:
     pattern = re.compile(r"/echo/(.*)")
 
     @staticmethod
     def match_url(request: Request) -> bool:
-        return bool(ECHO_ENDPOINT_PATTERN.match(request["url"]))
+        return bool(EchoEndpoint.pattern.match(request["url"]))
 
     @staticmethod
-    def handle(request: Request) -> bytes:
+    def build_response(request: Request) -> Response:
         echo_match = EchoEndpoint.pattern.match(request["url"])
-        message = echo_match.group(1).encode("utf-8")
+        message = echo_match.group(1)
         encoding_names = request["headers"].get("accept-encoding")
-        headers = [b"Content-Type: text/plain"]
+        headers = {"Content-Type": ["text/plain"]}
         if encoding_names and "gzip" in encoding_names:
-            headers.append(b"Content-Encoding: " + b"gzip")
-            message = gzip.compress(message)
+            headers["Content-Encoding"] = ["gzip"]
 
-        return _build_echo_message(message, headers=headers)
+        return {
+            "status": StatusCode.HTTP_200_OK,
+            "headers": headers,
+            "body": message.encode("utf-8")
+        }
 
 
-class UserAgentEndpoint(BaseEndpoint):
+class UserAgentEndpoint:
     pattern = re.compile(r"/user-agent")
 
     @staticmethod
@@ -79,15 +89,23 @@ class UserAgentEndpoint(BaseEndpoint):
         return bool(UserAgentEndpoint.pattern.match(request["url"]))
 
     @staticmethod
-    def handle(request: Request) -> bytes:
+    def build_response(request: Request) -> Response:
         user_agent_values = request["headers"].get("user-agent")
         if user_agent_values:
             message = user_agent_values[0]
-            return _build_echo_message(message.encode("utf-8"), headers=[b"Content-Type: text/plain"])
-        return b""
+            return {
+                "status": StatusCode.HTTP_200_OK,
+                "headers": {"Content-Type": ["text/plain"]},
+                "body": message.encode("utf-8"),
+            }
+        return {
+            "status": StatusCode.HTTP_404_NOT_FOUND,
+            "headers": {},
+            "body": b"",
+        }
 
 
-class FileEndpoint(BaseEndpoint):
+class FileEndpoint:
     pattern = re.compile(r"/files")
 
     @staticmethod
@@ -95,25 +113,41 @@ class FileEndpoint(BaseEndpoint):
         return bool(FileEndpoint.pattern.match(request["url"]))
 
     @staticmethod
-    def handle(request: Request) -> bytes:
+    def build_response(request: Request) -> Response:
         if file_name_match := re.compile(r".*/files/(.*)").match(request["url"]):
             file_name = file_name_match.group(1)
             if body := request["body"]:
                 with open(BASE_DIR / file_name, "wb") as file:
                     file.write(body)
-                return CREATED_MESSAGE
+                return {
+                    "status": StatusCode.HTTP_201_CREATED,
+                    "headers": {},
+                    "body": b"",
+                }
             else:
                 try:
                     with open(BASE_DIR / file_name, "rb") as file:
                         data = file.read()
                 except FileNotFoundError:
-                    return NOT_FOUND_MESSAGE
+                    return {
+                        "status": StatusCode.HTTP_404_NOT_FOUND,
+                        "headers": {},
+                        "body": b"",
+                    }
                 else:
-                    return _build_bytes_message(data)
-        return b""
+                    return {
+                        "status": StatusCode.HTTP_200_OK,
+                        "headers": {"Content-Type": ["application/octet-stream"]},
+                        "body": data,
+                    }
+        return {
+            "status": StatusCode.HTTP_404_NOT_FOUND,
+            "headers": {},
+            "body": b"",
+        }
 
 
-ENDPOINTS: list[BaseEndpoint] = [
+REGISTERED_ENDPOINTS: list[BaseEndpoint] = [
     RootEndpoint,
     EchoEndpoint,
     UserAgentEndpoint,
@@ -121,7 +155,7 @@ ENDPOINTS: list[BaseEndpoint] = [
 ]
 
 
-def run_http_server(port: int, base_directory: Path = Path('/tmp/')) -> None:
+def run_http_server(port: int) -> None:
     server_socket = sk.create_server(("localhost", port), reuse_port=True)
 
     while True:
@@ -138,55 +172,19 @@ def handle_http_request(client_socket: sk.socket) -> None:
         data = client_socket.recv(1024)
         request = _parse_http_request(data)
 
-        for endpoint in ENDPOINTS:
+        for endpoint in REGISTERED_ENDPOINTS:
             if endpoint.match_url(request):
-                client_socket.send(endpoint.handle(request))
+                response = endpoint.build_response(request)
                 break
         else:
-            client_socket.send(NOT_FOUND_MESSAGE)
+            response = {
+                "status": StatusCode.HTTP_404_NOT_FOUND,
+                "headers": {},
+                "body": b""
+            }
 
-        # if request["url"] == "/":
-        #     client_socket.send(OK_MESSAGE)
-        #     return
-
-        # if echo_match := ECHO_ENDPOINT_PATTERN.match(request["url"]):
-        #     message = echo_match.group(1).encode("utf-8")
-        #     encoding_names = request["headers"].get("accept-encoding")
-        #     headers = []
-        #     if encoding_names:
-        #         if "gzip" in encoding_names:
-        #             headers = [b"Content-Encoding: " + b"gzip"]
-        #             message = gzip.compress(message)
-        #     headers.append(b"Content-Type: text/plain")
-        #
-        #     client_socket.send(_build_echo_message(message, headers=headers))
-        #     return
-
-        # if USER_AGENT_ENDPOINT_PATTERN.match(request["url"]):
-        #     user_agent_values = request["headers"].get("user-agent")
-        #     if user_agent_values:
-        #         message = user_agent_values[0]
-        #         client_socket.send(_build_echo_message(message.encode("utf-8"), headers=[b"Content-Type: text/plain"]))
-        #         return
-
-        # if FILE_ENDPOINT_PATTERN.match(request["url"]):
-        #     if file_name_match := re.compile(r".*/files/(.*)").match(request["url"]):
-        #         file_name = file_name_match.group(1)
-        #         if body := request["body"]:
-        #             with open(BASE_DIR / file_name, "wb") as file:
-        #                 file.write(body)
-        #             client_socket.send(CREATED_MESSAGE)
-        #         else:
-        #             try:
-        #                 with open(BASE_DIR / file_name, "rb") as file:
-        #                     data = file.read()
-        #             except FileNotFoundError:
-        #                 client_socket.send(NOT_FOUND_MESSAGE)
-        #             else:
-        #                 client_socket.send(_build_bytes_message(data))
-        #         return
-
-        # client_socket.send(NOT_FOUND_MESSAGE)
+        encoded_response = _encode_response(response)
+        client_socket.send(encoded_response)
 
 
 def _parse_http_request(request_data: bytes) -> Request:
@@ -211,25 +209,21 @@ def _parse_http_request(request_data: bytes) -> Request:
     return request
 
 
-def _build_echo_message(message: bytes, headers: Optional[list[bytes]] = None) -> bytes:
-    message_size = str(len(message)).encode("utf-8")
+def _encode_response(response: Response) -> bytes:
+    encoded_version = b"HTTP/1.1"
+    encoded_status = response["status"].encode("utf-8")
+    encoded_headers = b""
 
-    encoded_headers = b"Content-Length: " + message_size
-    if headers is not None:
-        for header in headers:
-            encoded_headers = encoded_headers + b"\r\n" + header
+    encoded_body = response["body"]
+    if response["headers"].get("Content-Encoding") == ["gzip"]:
+        encoded_body = gzip.compress(encoded_body)
 
-    return (
-        b"HTTP/1.1 200 OK\r\n" + encoded_headers + b"\r\n\r\n" + message
-    )
+    response["headers"]["Content-Length"] = [str(len(encoded_body))]
 
+    for key, values in response["headers"].items():
+        encoded_headers = encoded_headers + key.encode("utf-8") + b": " + (",".join(values)).encode("utf-8") + b"\r\n"
 
-def _build_bytes_message(message: bytes) -> bytes:
-    message_size = str(len(message)).encode("utf-8")
-    return (
-        b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: "
-        + message_size + b"\r\n\r\n" + message
-    )
+    return encoded_version + b" " + encoded_status + b"\r\n" + encoded_headers + b"\r\n" + encoded_body
 
 
 def main():
