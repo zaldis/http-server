@@ -4,41 +4,43 @@ from typing import Protocol
 from .enums import StatusCode
 from .schemas import Request, Response
 from . import settings
+from .utils import create_file, read_file
 
 
-class BaseEndpoint(Protocol):
-    @staticmethod
-    def match_url(request: Request) -> bool:
-        raise NotImplementedError()
+class EndpointProtocol(Protocol):
+    def feed_url(self, request: Request) -> bool:
+        ...
 
-    @staticmethod
-    def build_response(request: Request) -> Response:
-        raise NotImplementedError()
+    def build_response(self, request: Request) -> Response:
+        ...
 
 
-class RootEndpoint:
-    @staticmethod
-    def match_url(request: Request) -> bool:
-        return request.url == "/"
+class BaseEndpoint:
+    pattern: re.Pattern[str]
+    args: tuple[str, ...]
 
-    @staticmethod
-    def build_response(request: Request) -> Response:
+    def feed_url(self, request: Request) -> bool:
+        endpoint_match = self.pattern.match(request.url)
+        if endpoint_match:
+            self.args = endpoint_match.groups()
+            return True
+        return False
+
+
+class RootEndpoint(BaseEndpoint):
+    pattern = re.compile("^/$")
+
+    def build_response(self, request: Request) -> Response:
         return Response(
             status=StatusCode.HTTP_200_OK
         )
 
 
-class EchoEndpoint:
+class EchoEndpoint(BaseEndpoint):
     pattern = re.compile(r"/echo/(.*)")
 
-    @staticmethod
-    def match_url(request: Request) -> bool:
-        return bool(EchoEndpoint.pattern.match(request.url))
-
-    @staticmethod
-    def build_response(request: Request) -> Response:
-        echo_match = EchoEndpoint.pattern.match(request.url)
-        message = echo_match.group(1)
+    def build_response(self, request: Request) -> Response:
+        message = self.args[0]
         encoding_names = request.headers.get("accept-encoding")
         headers = {"Content-Type": ["text/plain"]}
         if encoding_names and "gzip" in encoding_names:
@@ -51,15 +53,10 @@ class EchoEndpoint:
         )
 
 
-class UserAgentEndpoint:
+class UserAgentEndpoint(BaseEndpoint):
     pattern = re.compile(r"/user-agent")
 
-    @staticmethod
-    def match_url(request: Request) -> bool:
-        return bool(UserAgentEndpoint.pattern.match(request.url))
-
-    @staticmethod
-    def build_response(request: Request) -> Response:
+    def build_response(self, request: Request) -> Response:
         user_agent_values = request.headers.get("user-agent")
         if user_agent_values:
             message = user_agent_values[0]
@@ -71,39 +68,28 @@ class UserAgentEndpoint:
         return Response(status=StatusCode.HTTP_404_NOT_FOUND)
 
 
-class FileEndpoint:
-    pattern = re.compile(r"/files")
+class FileEndpoint(BaseEndpoint):
+    pattern = re.compile(r".*/files/(.*)")
 
-    @staticmethod
-    def match_url(request: Request) -> bool:
-        return bool(FileEndpoint.pattern.match(request.url))
-
-    @staticmethod
-    def build_response(request: Request) -> Response:
-        if file_name_match := re.compile(r".*/files/(.*)").match(request.url):
-            file_name = file_name_match.group(1)
-            if body := request.body:
-                with open(settings.BASE_DIR / file_name, "wb") as file:
-                    file.write(body)
-                return Response(status=StatusCode.HTTP_201_CREATED)
-            else:
-                try:
-                    with open(settings.BASE_DIR / file_name, "rb") as file:
-                        data = file.read()
-                except FileNotFoundError:
-                    return Response(status=StatusCode.HTTP_404_NOT_FOUND)
-                else:
-                    return Response(
-                        status=StatusCode.HTTP_200_OK,
-                        headers={"Content-Type": ["application/octet-stream"]},
-                        body=data,
-                    )
-        return Response(status=StatusCode.HTTP_404_NOT_FOUND)
+    def build_response(self, request: Request) -> Response:
+        file_name = self.args[0]
+        if body := request.body:
+            create_file(path=settings.BASE_DIR / file_name, content=body)
+            return Response(status=StatusCode.HTTP_201_CREATED)
+        else:
+            file_content = read_file(settings.BASE_DIR / file_name)
+            if file_content is None:
+                return Response(status=StatusCode.HTTP_404_NOT_FOUND)
+            return Response(
+                status=StatusCode.HTTP_200_OK,
+                headers={"Content-Type": ["application/octet-stream"]},
+                body=file_content,
+            )
 
 
-REGISTERED_ENDPOINTS: list[BaseEndpoint] = [
-    RootEndpoint,
-    EchoEndpoint,
-    UserAgentEndpoint,
-    FileEndpoint,
+REGISTERED_ENDPOINTS: list[EndpointProtocol] = [
+    RootEndpoint(),
+    EchoEndpoint(),
+    UserAgentEndpoint(),
+    FileEndpoint(),
 ]

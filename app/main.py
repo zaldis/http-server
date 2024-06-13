@@ -30,7 +30,7 @@ def handle_http_request(client_socket: sk.socket) -> None:
         request = _parse_http_request(data)
 
         for endpoint in REGISTERED_ENDPOINTS:
-            if endpoint.match_url(request):
+            if endpoint.feed_url(request):
                 response = endpoint.build_response(request)
                 break
         else:
@@ -71,8 +71,10 @@ def _encode_response(response: Response) -> bytes:
 
     response.headers["Content-Length"] = [str(len(encoded_body))]
 
-    for key, values in response.headers.items():
-        encoded_headers = encoded_headers + key.encode("utf-8") + b": " + (",".join(values)).encode("utf-8") + b"\r\n"
+    for header_name, header_values in response.headers.items():
+        encoded_name = header_name.encode("utf-8")
+        encoded_values = (",".join(header_values)).encode("utf-8")
+        encoded_headers = encoded_headers + encoded_name + b": " + encoded_values + b"\r\n"
 
     return encoded_version + b" " + encoded_status + b"\r\n" + encoded_headers + b"\r\n" + encoded_body
 
