@@ -1,15 +1,18 @@
+from dataclasses import dataclass, field
 from typing import TypedDict
 
 
-class Request(TypedDict):
+@dataclass
+class Request:
     method: str
     url: str
     version: str
-    headers: dict[str, list[str]]
-    body: bytes
+    headers: dict[str, list[str]] = field(default_factory=dict)
+    body: bytes = b""
 
 
-class Response(TypedDict):
+@dataclass
+class Response:
     status: str
-    headers: dict[str, list[str]]
-    body: bytes
+    headers: dict[str, list[str]] = field(default_factory=dict)
+    body: bytes = b""
