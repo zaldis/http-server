@@ -7,30 +7,37 @@ from . import settings
 from .utils import create_file, read_file
 
 
-class EndpointProtocol(Protocol):
-    def feed_url(self, request: Request) -> bool:
-        ...
+class HttpEndpointNotMatchError(Exception):
+    pass
 
-    def build_response(self, request: Request) -> Response:
+
+class EndpointProtocol(Protocol):
+    def activate(self, request: Request) -> Response:
         ...
 
 
 class BaseEndpoint:
     pattern: re.Pattern[str]
-    args: tuple[str, ...]
+    _args: tuple[str, ...]
 
-    def feed_url(self, request: Request) -> bool:
-        endpoint_match = self.pattern.match(request.url)
-        if endpoint_match:
-            self.args = endpoint_match.groups()
-            return True
-        return False
+    def activate(self, request: Request) -> Response:
+        self._feed_url(request.url)
+        return self.handle_request(request)
+
+    def handle_request(self, request: Request) -> Response:
+        raise NotImplementedError
+
+    def _feed_url(self, url: str):
+        endpoint_match = self.pattern.match(url)
+        if not endpoint_match:
+            raise HttpEndpointNotMatchError()
+        self.args = endpoint_match.groups()
 
 
 class RootEndpoint(BaseEndpoint):
     pattern = re.compile("^/$")
 
-    def build_response(self, request: Request) -> Response:
+    def handle_request(self, request: Request) -> Response:
         return Response(
             status=StatusCode.HTTP_200_OK
         )
@@ -39,7 +46,7 @@ class RootEndpoint(BaseEndpoint):
 class EchoEndpoint(BaseEndpoint):
     pattern = re.compile(r"/echo/(.*)")
 
-    def build_response(self, request: Request) -> Response:
+    def handle_request(self, request: Request) -> Response:
         message = self.args[0]
         encoding_names = request.headers.get("accept-encoding")
         headers = {"Content-Type": ["text/plain"]}
@@ -56,7 +63,7 @@ class EchoEndpoint(BaseEndpoint):
 class UserAgentEndpoint(BaseEndpoint):
     pattern = re.compile(r"/user-agent")
 
-    def build_response(self, request: Request) -> Response:
+    def handle_request(self, request: Request) -> Response:
         user_agent_values = request.headers.get("user-agent")
         if user_agent_values:
             message = user_agent_values[0]
@@ -71,7 +78,7 @@ class UserAgentEndpoint(BaseEndpoint):
 class FileEndpoint(BaseEndpoint):
     pattern = re.compile(r".*/files/(.*)")
 
-    def build_response(self, request: Request) -> Response:
+    def handle_request(self, request: Request) -> Response:
         file_name = self.args[0]
         if body := request.body:
             create_file(path=settings.BASE_DIR / file_name, content=body)
