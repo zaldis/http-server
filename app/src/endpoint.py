@@ -76,7 +76,7 @@ class UserAgentEndpoint(BaseEndpoint):
 
 
 class FileEndpoint(BaseEndpoint):
-    pattern = re.compile(r".*/files/(.*)")
+    pattern = re.compile(r"/files/(.*)")
 
     def handle_request(self, request: Request) -> Response:
         file_name = self.args[0]

@@ -1,38 +1,31 @@
-[![progress-banner](https://backend.codecrafters.io/progress/http-server/3df733c4-d045-43c0-8611-3b713a9b2d86)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+# Custom HTTP server
+Pet project to learn how HTTP servers work internally.
 
-This is a starting point for Python solutions to the
-["Build Your Own HTTP server" Challenge](https://app.codecrafters.io/courses/http-server/overview).
 
-[HTTP](https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol) is the
-protocol that powers the web. In this challenge, you'll build a HTTP/1.1 server
-that is capable of serving multiple clients.
+# Requirements
+1. Setup [pipenv](https://pipenv.pypa.io/en/latest/) environment with `Python3.11`
+2. Install dependencies: `pipenv install`
 
-Along the way you'll learn about TCP servers,
-[HTTP request syntax](https://www.w3.org/Protocols/rfc2616/rfc2616-sec5.html),
-and more.
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
-
-# Passing the first stage
-
-The entry point for your HTTP server implementation is in `app/main.py`. Study
-and uncomment the relevant code, and push your changes to pass the first stage:
-
-```sh
-git add .
-git commit -m "pass 1st stage" # any msg
-git push origin master
+# How to run
+```shell
+./server.sh {--directory base-directory-name}
 ```
 
-Time to move on to the next stage!
 
-# Stage 2 & beyond
+# How to add new endpoint
+1. Implement new endpoint class in `src/endpoint.py`. It should be inherited from `BaseEndpoint` and implements `EndpointProtocol`.
+2. Add new class instance to the `REGISTERED_ENDPOINTS`.
 
-Note: This section is for stages 2 and beyond.
 
-1. Ensure you have `python (3.11)` installed locally
-1. Run `./your_server.sh` to run your program, which is implemented in
-   `app/main.py`.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+# Implemented endpoints
+- `/` (Returns 200 status code).
+
+
+- `/echo/{message:string}` (Returns the message. The message can be encoded if `Accept-Encoding: gzip` header is provided).
+
+
+- `/user-agent` (Returns the value of `User-Agent` header).
+
+
+- `/files/{file-name:string}` (Returns file's content if body is empty. Creates new file based on body otherwise).
