@@ -6,7 +6,7 @@ from threading import Thread
 
 from app.src.endpoint import REGISTERED_ENDPOINTS, HttpEndpointNotMatchError
 from app.src.enums import StatusCode
-from app.src.schemas import Response
+from app.src.schemas import Response, Request
 from app.src import settings, utils
 
 
@@ -18,27 +18,30 @@ def run_http_server(port: int) -> None:
         client_socket, client_address = server_socket.accept()
 
         print("New connection with ", client_address)
-        thread = Thread(target=handle_http_request, args=(client_socket, ))
+        thread = Thread(target=handle_http_connection, args=(client_socket, ))
         thread.start()
 
 
-def handle_http_request(client_socket: sk.socket) -> None:
+def handle_http_connection(client_socket: sk.socket) -> None:
     with client_socket:
-        data = client_socket.recv(1024)
-        request = utils.parse_http_request(data)
+        http_request_line = client_socket.recv(1024)
+        request = utils.parse_http_request(http_request_line)
+        response = handle_http_request(request)
+        http_response_line = utils.encode_response(response)
+        client_socket.send(http_response_line)
 
-        for endpoint in REGISTERED_ENDPOINTS:
-            try:
-                response = endpoint.activate(request)
-            except HttpEndpointNotMatchError:
-                ...
-            else:
-                break
+
+def handle_http_request(request: Request) -> Response:
+    for endpoint in REGISTERED_ENDPOINTS:
+        try:
+            response = endpoint.activate(request)
+        except HttpEndpointNotMatchError:
+            ...
         else:
-            response = Response(status=StatusCode.HTTP_404_NOT_FOUND)
-
-        encoded_response = utils.encode_response(response)
-        client_socket.send(encoded_response)
+            break
+    else:
+        response = Response(status=StatusCode.HTTP_404_NOT_FOUND)
+    return response
 
 
 def main():

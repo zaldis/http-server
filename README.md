@@ -18,6 +18,15 @@ Pet project to learn how HTTP servers work internally.
 2. Add new class instance to the `REGISTERED_ENDPOINTS`.
 
 
+# How to e2e test
+1. Create new file with the name test_*.sh in the directory `test/e2e/`
+2. Write new test based on the template: GIVE/WHEN/THEN.
+3. Run tests from the project's root directory:
+```shell
+export TEST_BASE_DIR=$(pwd) && test/e2e/run.sh
+```
+
+
 # Implemented endpoints
 - `/` (Returns 200 status code).
 
