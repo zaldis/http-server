@@ -2,6 +2,8 @@
 Pet project to learn how HTTP servers work internally.
 
 
+
+
 # Requirements
 1. Setup [pipenv](https://pipenv.pypa.io/en/latest/) environment with `Python3.11`
 2. Install dependencies: `pipenv install`
@@ -30,6 +32,7 @@ export TEST_BASE_DIR=$(pwd) && test/e2e/run.sh
 # Implemented endpoints
 - `/` (Returns 200 status code).
 
+![](demo/root.gif)
 
 - `/echo/{message:string}` (Returns the message. The message can be encoded if `Accept-Encoding: gzip` header is provided).
 
